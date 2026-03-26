@@ -23,8 +23,7 @@ st.markdown("""
 # -----------------------------------------------------------------------------
 # Bulletproof Session State Initialization
 # -----------------------------------------------------------------------------
-# Ye loop ensure karega ki keys hamesha exist karein, chahe app refresh ho
-for key in ['returns_df', 'scanned_message', 'scanned_status']:
+for key in ['returns_df', 'scanned_message', 'scanned_status', 'bulk_message', 'bulk_status']:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -41,7 +40,7 @@ def load_data(file):
         df.columns = df.columns.str.strip()
         
         if 'Tracking ID' not in df.columns:
-            st.sidebar.error("❌ 'Tracking ID' column not found in the uploaded file.")
+            st.sidebar.error("❌ 'Tracking ID' column not found in the uploaded master file.")
             return None
                 
         if 'Received' not in df.columns:
@@ -59,7 +58,7 @@ def load_data(file):
 def process_scan(tracking_id):
     df = st.session_state.get('returns_df')
     if df is None:
-        st.error("Please upload a file first.")
+        st.error("Please upload the main file first.")
         return
 
     clean_id = str(tracking_id).strip().lower()
@@ -85,7 +84,6 @@ def process_scan(tracking_id):
         st.session_state['scanned_message'] = f"❌ Tracking ID '{tracking_id}' not found in uploaded sheet!"
 
 def display_aggrid(df):
-    # Only the columns you specifically requested + Received
     default_cols = [
         'Order Item ID',  # C
         'Tracking ID',    # E
@@ -132,14 +130,66 @@ def to_excel(df):
         df.to_excel(writer, index=False, sheet_name='Updated Returns')
     return output.getvalue()
 
+def get_bulk_template_csv():
+    df = pd.DataFrame(columns=['Tracking ID'])
+    return df.to_csv(index=False).encode('utf-8')
+
+def process_bulk_upload(bulk_file):
+    df = st.session_state.get('returns_df')
+    if df is None:
+        st.session_state['bulk_status'] = 'error'
+        st.session_state['bulk_message'] = "Pehle sidebar mein Master Excel file upload karein!"
+        return
+
+    try:
+        if bulk_file.name.endswith('.csv'):
+            bulk_df = pd.read_csv(bulk_file)
+        else:
+            bulk_df = pd.read_excel(bulk_file)
+            
+        if 'Tracking ID' not in bulk_df.columns:
+            st.session_state['bulk_status'] = 'error'
+            st.session_state['bulk_message'] = "❌ Template mein 'Tracking ID' column nahi mila."
+            return
+            
+        # Clean bulk IDs
+        bulk_ids = bulk_df['Tracking ID'].dropna().astype(str).str.strip().str.lower().tolist()
+        
+        if not bulk_ids:
+            st.session_state['bulk_status'] = 'error'
+            st.session_state['bulk_message'] = "⚠️ File empty hai, koi Tracking ID nahi mili."
+            return
+            
+        # Matching Process
+        main_ids = df['Tracking ID']
+        matches = main_ids.isin(bulk_ids)
+        
+        already_received = df[matches & (df['Received'] == True)].shape[0]
+        newly_received = df[matches & (df['Received'] == False)].shape[0]
+        
+        # Update Main DF
+        df.loc[matches, 'Received'] = True
+        st.session_state['returns_df'] = df
+        
+        total_unique_bulk = len(set(bulk_ids))
+        found_in_master = df[matches]['Tracking ID'].nunique()
+        not_found = total_unique_bulk - found_in_master
+        
+        st.session_state['bulk_status'] = 'success'
+        st.session_state['bulk_message'] = f"✅ Bulk Update Complete! \n\n🎯 Naye mark hue: **{newly_received}** \n⚠️ Pehle se mark the: **{already_received}** \n❌ Sheet mein nahi mile: **{not_found}**"
+        
+    except Exception as e:
+        st.session_state['bulk_status'] = 'error'
+        st.session_state['bulk_message'] = f"Error processing file: {e}"
+
 # -----------------------------------------------------------------------------
 # Sidebar
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.title("⚙️ Operations")
-    uploaded_file = st.file_uploader("Upload Returns Excel (.xlsx)", type=['xlsx', 'xls'])
+    st.markdown("**1. Upload Master Returns Data**")
+    uploaded_file = st.file_uploader("Upload Returns Excel (.xlsx)", type=['xlsx', 'xls'], key="master_upload")
     
-    # Safe check for df
     current_df = st.session_state.get('returns_df')
     
     if uploaded_file is not None and current_df is None:
@@ -147,10 +197,9 @@ with st.sidebar:
             loaded_df = load_data(uploaded_file)
             if loaded_df is not None:
                 st.session_state['returns_df'] = loaded_df
-                st.success("File loaded successfully!")
+                st.success("Master File loaded successfully!")
                 st.rerun()
 
-    # Re-fetch df after potential upload
     current_df = st.session_state.get('returns_df')
     
     if current_df is not None:
@@ -168,19 +217,19 @@ with st.sidebar:
             current_df['Received'] = False
             st.session_state['returns_df'] = current_df
             st.session_state['scanned_message'] = None
+            st.session_state['bulk_message'] = None
             st.rerun()
 
 # -----------------------------------------------------------------------------
 # Main Application Page
 # -----------------------------------------------------------------------------
-st.title("📦 Flipkart Returns Scanner - Panipat / Malur / Bhiwandi")
+st.title("📦 Flipkart Returns Scanner")
 
 main_df = st.session_state.get('returns_df')
 
 if main_df is None:
-    st.info("👈 Please upload your Flipkart Returns Excel file in the sidebar to begin.")
+    st.info("👈 Please upload your MAIN Flipkart Returns Excel file in the sidebar to begin.")
 else:
-    # Metrics
     total_count = len(main_df)
     received_count = main_df['Received'].sum()
     pending_count = total_count - received_count
@@ -192,9 +241,10 @@ else:
     
     st.divider()
 
-    tab_scan, tab_all = st.tabs(["🎯 Scan & Mark Received", "📋 All Returns Data"])
+    # NAYA TAB ADDED HERE: "📁 Bulk Upload"
+    tab_scan, tab_bulk, tab_all = st.tabs(["🎯 Single Scan", "📁 Bulk Upload", "📋 All Returns Data"])
     
-    # --- TAB 1: Scan & Mark Received ---
+    # --- TAB 1: Single Scan ---
     with tab_scan:
         st.markdown('<p class="big-font">Scan Tracking ID</p>', unsafe_allow_html=True)
         
@@ -209,7 +259,6 @@ else:
                 process_scan(manual_tracking_id)
                 st.rerun()
 
-        # SAFE DISPLAY LOGIC - No Error Possible Here
         msg = st.session_state.get('scanned_message')
         if msg:
             status = st.session_state.get('scanned_status', 'info')
@@ -240,7 +289,41 @@ else:
 
         display_aggrid(filtered_df)
 
-    # --- TAB 2: All Returns ---
+    # --- TAB 2: BULK UPLOAD (NEW FEATURE) ---
+    with tab_bulk:
+        st.markdown("### 📥 Bulk Mark Returns as Received")
+        st.write("Agar aapke paas bahut saare Tracking IDs hain jo ek sath mark karne hain, toh is feature ka use karein.")
+        
+        st.markdown("**Step 1:** Niche di gayi template download karein.")
+        st.download_button(
+            label="⬇️ Download Tracking ID Template (CSV)",
+            data=get_bulk_template_csv(),
+            file_name="bulk_tracking_template.csv",
+            mime="text/csv"
+        )
+        
+        st.markdown("**Step 2:** Us template file mein apne saare Tracking IDs paste karke save karein.")
+        
+        st.markdown("**Step 3:** Bhari hui template ko yahan upload karein.")
+        bulk_file = st.file_uploader("Upload Filled Template (.csv / .xlsx)", type=['csv', 'xlsx'])
+        
+        if st.button("🚀 Process Bulk Upload", type="primary"):
+            if bulk_file is not None:
+                process_bulk_upload(bulk_file)
+                st.rerun()
+            else:
+                st.warning("Please upload a file first.")
+                
+        # Show Bulk Output Message
+        bulk_msg = st.session_state.get('bulk_message')
+        if bulk_msg:
+            b_status = st.session_state.get('bulk_status', 'info')
+            if b_status == 'success':
+                st.success(bulk_msg)
+            else:
+                st.error(bulk_msg)
+
+    # --- TAB 3: All Returns ---
     with tab_all:
         st.markdown("### Master Returns Dataset")
         
