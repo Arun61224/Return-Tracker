@@ -33,7 +33,7 @@ for key in ['returns_df', 'scanned_message', 'scanned_status', 'bulk_message', '
 # -----------------------------------------------------------------------------
 def load_data_from_gsheet(url):
     try:
-        # Google Sheet URL ko CSV download URL mein convert karna
+        # Convert Google Sheet URL to CSV export URL
         match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
         if match:
             sheet_id = match.group(1)
@@ -62,7 +62,7 @@ def load_data_from_gsheet(url):
         
         return df
     except Exception as e:
-        st.sidebar.error(f"Error loading file: {e}. Make sure link is 'Anyone with the link'.")
+        st.sidebar.error(f"Error loading file: {e}. Make sure link access is set to 'Anyone with the link'.")
         return None
 
 def process_scan(tracking_id):
@@ -154,7 +154,7 @@ def process_bulk_upload(bulk_file):
     
     if df is None:
         st.session_state['bulk_status'] = 'error'
-        st.session_state['bulk_message'] = "Please load the Google Sheet in the sidebar first!"
+        st.session_state['bulk_message'] = "Please load the Master Google Sheet in the sidebar first!"
         return
 
     try:
@@ -191,49 +191,49 @@ def process_bulk_upload(bulk_file):
         not_found_count = len(missing_ids)
         
         st.session_state['bulk_status'] = 'success'
-        st.session_state['bulk_message'] = f"✅ Bulk Update Pura Hua! \n\n🎯 Naye mark hue: **{newly_received}** \n⚠️ Pehle se mark the: **{already_received}** \n❌ Sheet mein nahi mile: **{not_found_count}**"
+        st.session_state['bulk_message'] = f"✅ Bulk Update Complete! \n\n🎯 Newly marked: **{newly_received}** \n⚠️ Already marked: **{already_received}** \n❌ Not found in sheet: **{not_found_count}**"
         
     except Exception as e:
         st.session_state['bulk_status'] = 'error'
-        st.session_state['bulk_message'] = f"File process karne mein error: {e}"
+        st.session_state['bulk_message'] = f"Error processing file: {e}"
 
 # -----------------------------------------------------------------------------
 # Sidebar
 # -----------------------------------------------------------------------------
 with st.sidebar:
-    st.title("⚙️ Operations (Kaam-Kaaj)")
+    st.title("⚙️ Operations")
     st.markdown("**1. Master Google Sheet**")
     
-    # Default URL set kar diya hai aapki sheet ka
+    # Default URL
     default_url = "https://docs.google.com/spreadsheets/d/1EUkC4MZAaIW5MIfYNT01nsYyttrL1Rp-a9Z2EsOU6us/edit?usp=sharing"
     gsheet_url = st.text_input("Google Sheet Link:", value=default_url)
     
-    if st.button("🔄 Data Load Karein", type="primary"):
+    if st.button("🔄 Load Data", type="primary"):
         if gsheet_url:
-            with st.spinner("Google Sheets se data aa raha hai..."):
+            with st.spinner("Fetching data from Google Sheets..."):
                 loaded_df = load_data_from_gsheet(gsheet_url)
                 if loaded_df is not None:
                     st.session_state['returns_df'] = loaded_df
-                    st.success("✅ Data load ho gaya!")
+                    st.success("✅ Data loaded successfully!")
                     st.rerun()
         else:
-            st.warning("Kripya link daalein.")
+            st.warning("Please enter a link.")
 
     current_df = st.session_state.get('returns_df')
     
     if current_df is not None:
         st.divider()
-        st.markdown("### 💾 Data Save Karein")
-        st.info("💡 Note: Live Google Sheet mein direct update ke liye API chahiye. Scan ke baad yahan se Excel download karke sheet mein paste kar lein.")
+        st.markdown("### 💾 Save Data")
+        st.info("💡 Note: Direct live updates to Google Sheets require an API key. Please download the updated Excel here and paste it into your sheet after scanning.")
         
         csv = current_df.to_csv(index=False).encode('utf-8')
-        st.download_button(label="📥 Backup Download (CSV)", data=csv, file_name="returns_backup.csv", mime="text/csv", use_container_width=True)
+        st.download_button(label="📥 Download Backup (CSV)", data=csv, file_name="returns_backup.csv", mime="text/csv", use_container_width=True)
         
         excel_data = to_excel(current_df)
-        st.download_button(label="📊 Updated Excel Download", data=excel_data, file_name="updated_flipkart_returns.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, type="primary")
+        st.download_button(label="📊 Download Updated Excel", data=excel_data, file_name="updated_flipkart_returns.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, type="primary")
         
         st.divider()
-        if st.button("🗑️ Sabhi Received Marks Clear Karein", use_container_width=True):
+        if st.button("🗑️ Clear All Received Marks", use_container_width=True):
             current_df['Received'] = False
             st.session_state['returns_df'] = current_df
             st.session_state['scanned_message'] = None
@@ -249,7 +249,7 @@ st.title("📦 Flipkart Returns Scanner")
 main_df = st.session_state.get('returns_df')
 
 if main_df is None:
-    st.info("👈 Kripya sidebar mein 'Data Load Karein' par click karke shuru karein.")
+    st.info("👈 Please click 'Load Data' in the sidebar to begin.")
 else:
     total_count = len(main_df)
     received_count = main_df['Received'].sum()
@@ -257,8 +257,8 @@ else:
     
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Returns", total_count)
-    col2.metric("✅ Received (Mil Gaye)", received_count)
-    col3.metric("⏳ Pending (Baaki Hain)", pending_count)
+    col2.metric("✅ Received", received_count)
+    col3.metric("⏳ Pending", pending_count)
     
     st.divider()
 
@@ -266,18 +266,18 @@ else:
     
     # --- TAB 1: Single Scan ---
     with tab_scan:
-        st.markdown('<p class="big-font">Tracking ID Scan Karein</p>', unsafe_allow_html=True)
+        st.markdown('<p class="big-font">Scan Tracking ID</p>', unsafe_allow_html=True)
         
         with st.form("scan_form", clear_on_submit=True):
             col_input, col_btn = st.columns([4, 1])
             with col_input:
-                manual_tracking_id = st.text_input("Tracking ID", label_visibility="collapsed", placeholder="Yahan Tracking ID scan ya type karein...")
+                manual_tracking_id = st.text_input("Tracking ID", label_visibility="collapsed", placeholder="Scan or type Tracking ID here...")
             with col_btn:
-                submitted = st.form_submit_button("Received Mark Karein", use_container_width=True)
+                submitted = st.form_submit_button("Mark as Received", use_container_width=True)
             
             if submitted and manual_tracking_id:
                 process_scan(manual_tracking_id)
-                st.rerun()
+                # Removed st.rerun() to maintain the active tab
 
         msg = st.session_state.get('scanned_message')
         if msg:
@@ -295,9 +295,9 @@ else:
     # --- TAB 2: BULK UPLOAD ---
     with tab_bulk:
         st.markdown("### 📥 Bulk Mark Returns")
-        st.write("Agar aapke paas bahut saari Tracking IDs hain, toh ek sath upload karein.")
+        st.write("Upload multiple Tracking IDs at once using a template.")
         
-        st.markdown("**Step 1:** Template download karein.")
+        st.markdown("**Step 1:** Download the template.")
         st.download_button(
             label="⬇️ Download Tracking ID Template",
             data=get_bulk_template_csv(),
@@ -305,17 +305,17 @@ else:
             mime="text/csv"
         )
         
-        st.markdown("**Step 2:** File mein IDs paste karein.")
+        st.markdown("**Step 2:** Paste your IDs into the file.")
         
-        st.markdown("**Step 3:** Bhari hui file yahan upload karein.")
+        st.markdown("**Step 3:** Upload the filled file here.")
         bulk_file = st.file_uploader("Upload Filled Template (.csv / .xlsx)", type=['csv', 'xlsx'])
         
         if st.button("🚀 Process Bulk Upload", type="primary"):
             if bulk_file is not None:
                 process_bulk_upload(bulk_file)
-                st.rerun()
+                # Removed st.rerun() to keep the user on the Bulk Upload tab!
             else:
-                st.warning("Kripya pehle file upload karein.")
+                st.warning("Please upload a file first.")
                 
         # --- BULK UPLOAD MESSAGES & MISSING IDs DOWNLOAD ---
         bulk_msg = st.session_state.get('bulk_message')
@@ -326,7 +326,7 @@ else:
                 
                 missing_ids = st.session_state.get('missing_bulk_ids')
                 if missing_ids and len(missing_ids) > 0:
-                    st.warning(f"⚠️ {len(missing_ids)} Tracking IDs sheet mein nahi mili. Niche se download karein:")
+                    st.warning(f"⚠️ {len(missing_ids)} Tracking IDs were not found in the sheet. Download them below:")
                     st.download_button(
                         label="⬇️ Download Missing IDs (CSV)",
                         data=get_missing_ids_csv(missing_ids),
