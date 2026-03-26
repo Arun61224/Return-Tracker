@@ -152,7 +152,6 @@ def process_bulk_upload(bulk_file):
             st.session_state['bulk_message'] = "❌ Template mein 'Tracking ID' column nahi mila."
             return
             
-        # Clean bulk IDs
         bulk_ids = bulk_df['Tracking ID'].dropna().astype(str).str.strip().str.lower().tolist()
         
         if not bulk_ids:
@@ -160,14 +159,12 @@ def process_bulk_upload(bulk_file):
             st.session_state['bulk_message'] = "⚠️ File empty hai, koi Tracking ID nahi mili."
             return
             
-        # Matching Process
         main_ids = df['Tracking ID']
         matches = main_ids.isin(bulk_ids)
         
         already_received = df[matches & (df['Received'] == True)].shape[0]
         newly_received = df[matches & (df['Received'] == False)].shape[0]
         
-        # Update Main DF
         df.loc[matches, 'Received'] = True
         st.session_state['returns_df'] = df
         
@@ -241,8 +238,8 @@ else:
     
     st.divider()
 
-    # NAYA TAB ADDED HERE: "📁 Bulk Upload"
-    tab_scan, tab_bulk, tab_all = st.tabs(["🎯 Single Scan", "📁 Bulk Upload", "📋 All Returns Data"])
+    # Sirf 2 Tabs ab
+    tab_scan, tab_bulk = st.tabs(["🎯 Single Scan", "📁 Bulk Upload"])
     
     # --- TAB 1: Single Scan ---
     with tab_scan:
@@ -270,26 +267,9 @@ else:
                 st.error(msg)
 
         st.markdown("### Recent Data Overview")
-        f_col1, f_col2 = st.columns(2)
-        with f_col1:
-            pending_only = st.checkbox("Show Pending Only", value=False, key="scan_pending")
-        with f_col2:
-            search_query = st.text_input("🔍 Quick Search (Tracking ID / SKU)", key="scan_search")
+        display_aggrid(main_df)
 
-        filtered_df = main_df.copy()
-        if pending_only:
-            filtered_df = filtered_df[filtered_df['Received'] == False]
-        if search_query:
-            search_query = search_query.lower()
-            mask = (
-                filtered_df['Tracking ID'].astype(str).str.lower().str.contains(search_query) |
-                filtered_df.get('SKU', pd.Series(dtype=str)).astype(str).str.lower().str.contains(search_query)
-            )
-            filtered_df = filtered_df[mask]
-
-        display_aggrid(filtered_df)
-
-    # --- TAB 2: BULK UPLOAD (NEW FEATURE) ---
+    # --- TAB 2: BULK UPLOAD ---
     with tab_bulk:
         st.markdown("### 📥 Bulk Mark Returns as Received")
         st.write("Agar aapke paas bahut saare Tracking IDs hain jo ek sath mark karne hain, toh is feature ka use karein.")
@@ -314,7 +294,6 @@ else:
             else:
                 st.warning("Please upload a file first.")
                 
-        # Show Bulk Output Message
         bulk_msg = st.session_state.get('bulk_message')
         if bulk_msg:
             b_status = st.session_state.get('bulk_status', 'info')
@@ -322,26 +301,3 @@ else:
                 st.success(bulk_msg)
             else:
                 st.error(bulk_msg)
-
-    # --- TAB 3: All Returns ---
-    with tab_all:
-        st.markdown("### Master Returns Dataset")
-        
-        f2_col1, f2_col2 = st.columns(2)
-        with f2_col1:
-            all_pending_only = st.checkbox("Show Pending Only", value=False, key="all_pending")
-        with f2_col2:
-            all_search_query = st.text_input("🔍 Quick Search (Tracking ID / SKU)", key="all_search")
-
-        filtered_all_df = main_df.copy()
-        if all_pending_only:
-            filtered_all_df = filtered_all_df[filtered_all_df['Received'] == False]
-        if all_search_query:
-            all_search_query = all_search_query.lower()
-            mask2 = (
-                filtered_all_df['Tracking ID'].astype(str).str.lower().str.contains(all_search_query) |
-                filtered_all_df.get('SKU', pd.Series(dtype=str)).astype(str).str.lower().str.contains(all_search_query)
-            )
-            filtered_all_df = filtered_all_df[mask2]
-            
-        display_aggrid(filtered_all_df)
