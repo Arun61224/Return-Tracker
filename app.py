@@ -22,7 +22,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# Session State Initialization
+# Session State Initialization (Error Fix Here)
 # -----------------------------------------------------------------------------
 if 'returns_df' not in st.session_state:
     st.session_state['returns_df'] = None
@@ -232,11 +232,13 @@ else:
                 process_scan(manual_tracking_id)
                 st.rerun()
 
-        # Display Scan Status Message
-        if st.session_state['scanned_message']:
-            if st.session_state['scanned_status'] == 'success':
+        # Display Scan Status Message (SAFE .get() method applied here!)
+        if st.session_state.get('scanned_message'):
+            status = st.session_state.get('scanned_status')
+            
+            if status == 'success':
                 st.success(st.session_state['scanned_message'])
-            elif st.session_state['scanned_status'] == 'warning':
+            elif status == 'warning':
                 st.warning(st.session_state['scanned_message'])
             else:
                 st.error(st.session_state['scanned_message'])
