@@ -1,16 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
-import time
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
-from PIL import Image
-
-# For barcode scanning
-try:
-    from pyzbar.pyzbar import decode
-    ZBAR_AVAILABLE = True
-except ImportError:
-    ZBAR_AVAILABLE = False
 
 # -----------------------------------------------------------------------------
 # Configuration & Setup
@@ -22,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for UI enhancements (Dark mode friendly)
+# Custom CSS for UI enhancements
 st.markdown("""
     <style>
     .big-font { font-size: 24px !important; font-weight: bold; }
@@ -45,26 +36,19 @@ if 'scanned_status' not in st.session_state:
 # -----------------------------------------------------------------------------
 def load_data(file):
     try:
-        # Try specific sheet first
+        # Try specific sheet first, fallback to first sheet
         try:
             df = pd.read_excel(file, sheet_name="1-25 Flipkart Return")
         except ValueError:
-            # Fallback to first sheet
             df = pd.read_excel(file, sheet_name=0)
         
-        # Ensure Tracking ID column exists (strip whitespace to be safe)
+        # Strip whitespace from column names just in case
         df.columns = df.columns.str.strip()
         
-        # Fuzzy match for Tracking ID column if exact isn't found
-        possible_tracking_cols = [c for c in df.columns if 'tracking' in c.lower() and 'id' in c.lower()]
-        tracking_col = 'Tracking ID'
-        
-        if tracking_col not in df.columns:
-            if possible_tracking_cols:
-                df.rename(columns={possible_tracking_cols[0]: tracking_col}, inplace=True)
-            else:
-                st.sidebar.error("❌ 'Tracking ID' column not found in the uploaded file.")
-                return None
+        # Verify Tracking ID exists
+        if 'Tracking ID' not in df.columns:
+            st.sidebar.error("❌ 'Tracking ID' column not found in the uploaded file.")
+            return None
                 
         # Initialize Received column if not present
         if 'Received' not in df.columns:
@@ -73,8 +57,8 @@ def load_data(file):
             # Standardize existing boolean/text data
             df['Received'] = df['Received'].apply(lambda x: True if str(x).lower() == 'true' else False)
             
-        # Clean Tracking IDs for reliable matching
-        df[tracking_col] = df[tracking_col].astype(str).str.strip().str.lower()
+        # Clean Tracking IDs for reliable exact matching
+        df['Tracking ID'] = df['Tracking ID'].astype(str).str.strip().str.lower()
         
         return df
     except Exception as e:
@@ -92,10 +76,10 @@ def process_scan(tracking_id):
 
     df = st.session_state['returns_df']
     
-    # Check if exists
+    # Check if exact match exists
     mask = df['Tracking ID'] == clean_id
     if mask.any():
-        # Get item details for the success message
+        # Get item details for the success message (Fallback to 'N/A' if columns are missing somehow)
         row = df[mask].iloc[0]
         product = row.get('Product', 'N/A')
         sku = row.get('SKU', 'N/A')
@@ -115,7 +99,7 @@ def process_scan(tracking_id):
         st.session_state['scanned_message'] = f"❌ Tracking ID '{tracking_id}' not found in uploaded sheet!"
 
 def display_aggrid(df):
-    # Determine columns to show
+    # Determine columns to show by default
     default_cols = ['Tracking ID', 'SKU', 'Quantity', 'Product', 'Return Reason', 
                     'Return Sub-reason', 'Return Status', 'Location Name', 'Received']
     
@@ -149,7 +133,7 @@ def display_aggrid(df):
         allow_unsafe_jscode=True,
         update_mode="NO_UPDATE",
         columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
-        theme='streamlit' # Adapts to light/dark mode
+        theme='streamlit' 
     )
 
 def to_excel(df):
@@ -236,7 +220,7 @@ else:
     with tab_scan:
         st.markdown('<p class="big-font">Scan Tracking ID</p>', unsafe_allow_html=True)
         
-        # Use a form so pressing Enter triggers the scan automatically
+        # Scanner Form
         with st.form("scan_form", clear_on_submit=True):
             col_input, col_btn = st.columns([4, 1])
             with col_input:
@@ -256,27 +240,9 @@ else:
                 st.warning(st.session_state['scanned_message'])
             else:
                 st.error(st.session_state['scanned_message'])
-                
-        # Camera Barcode Scanner (Bonus)
-        with st.expander("📷 Open Camera Barcode Scanner"):
-            if not ZBAR_AVAILABLE:
-                st.error("pyzbar library not installed. Please add 'libzbar0' to packages.txt for Streamlit Cloud.")
-            else:
-                camera_image = st.camera_input("Scan Barcode with Camera")
-                if camera_image is not None:
-                    image = Image.open(camera_image)
-                    decoded_objects = decode(image)
-                    if decoded_objects:
-                        barcode_data = decoded_objects[0].data.decode('utf-8')
-                        st.info(f"Detected Barcode: {barcode_data}")
-                        if st.button(f"Mark {barcode_data} as Received", key="btn_camera_scan"):
-                            process_scan(barcode_data)
-                            st.rerun()
-                    else:
-                        st.warning("No barcode detected in the image. Please try again.")
 
         st.markdown("### Recent Data Overview")
-        # Quick filter controls for the table below
+        # Quick filters
         f_col1, f_col2 = st.columns(2)
         with f_col1:
             pending_only = st.checkbox("Show Pending Only", value=False, key="scan_pending")
