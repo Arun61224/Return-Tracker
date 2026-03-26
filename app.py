@@ -2,7 +2,17 @@ import streamlit as st
 import pandas as pd
 import io
 import re
+from datetime import datetime
+import pytz
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
+
+# Google API libraries
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    GSPREAD_AVAILABLE = True
+except ImportError:
+    GSPREAD_AVAILABLE = False
 
 # -----------------------------------------------------------------------------
 # Configuration & Setup
@@ -22,7 +32,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# Bulletproof Session State Initialization
+# Session State Initialization
 # -----------------------------------------------------------------------------
 for key in ['returns_df', 'scanned_message', 'scanned_status', 'bulk_message', 'bulk_status', 'missing_bulk_ids']:
     if key not in st.session_state:
@@ -31,9 +41,14 @@ for key in ['returns_df', 'scanned_message', 'scanned_status', 'bulk_message', '
 # -----------------------------------------------------------------------------
 # Helper Functions
 # -----------------------------------------------------------------------------
+def get_current_ist_time():
+    """Returns the current time in Indian Standard Time (IST)."""
+    ist = pytz.timezone('Asia/Kolkata')
+    return datetime.now(ist).strftime('%Y-%m-%d %I:%M:%S %p')
+
 def load_data_from_gsheet(url):
     try:
-        # Convert Google Sheet URL to CSV export URL
+        # Google Sheet URL ko CSV download URL mein convert karna
         match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
         if match:
             sheet_id = match.group(1)
@@ -53,10 +68,15 @@ def load_data_from_gsheet(url):
             st.sidebar.error("❌ 'Tracking ID' column not found in the Google Sheet.")
             return None
                 
+        # Received Status column initialize
         if 'Received' not in df.columns:
             df['Received'] = False
         else:
             df['Received'] = df['Received'].apply(lambda x: True if str(x).lower() == 'true' else False)
+            
+        # Timestamp column initialize
+        if 'Received Timestamp' not in df.columns:
+            df['Received Timestamp'] = ""
             
         df['Tracking ID'] = df['Tracking ID'].astype(str).str.strip().str.lower()
         
@@ -64,6 +84,40 @@ def load_data_from_gsheet(url):
     except Exception as e:
         st.sidebar.error(f"Error loading file: {e}. Make sure link access is set to 'Anyone with the link'.")
         return None
+
+def sync_to_google_sheet(df, url):
+    """Saves the updated DataFrame back to the live Google Sheet."""
+    if not GSPREAD_AVAILABLE:
+        return False, "Kripya requirements.txt mein 'gspread' aur 'google-auth' add karein."
+        
+    try:
+        # Check if secrets are available in Streamlit Cloud
+        if "gcp_service_account" not in st.secrets:
+            return False, "API Key missing! Kripya Streamlit Secrets mein GCP Service Account add karein."
+            
+        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+        client = gspread.authorize(creds)
+        
+        # Open sheet and update
+        match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
+        if not match:
+            return False, "Invalid URL"
+            
+        sheet_id = match.group(1)
+        spreadsheet = client.open_by_key(sheet_id)
+        worksheet = spreadsheet.sheet1 # First sheet by default
+        
+        # Clean dataframe for Google Sheets (replace NaN with empty string)
+        df_filled = df.fillna("")
+        
+        # Update entire sheet to merge the new Received & Timestamp data
+        worksheet.clear()
+        worksheet.update([df_filled.columns.values.tolist()] + df_filled.values.tolist())
+        
+        return True, "Success"
+    except Exception as e:
+        return False, str(e)
 
 def process_scan(tracking_id):
     df = st.session_state.get('returns_df')
@@ -86,6 +140,8 @@ def process_scan(tracking_id):
             st.session_state['scanned_message'] = f"⚠️ Tracking ID '{tracking_id}' is ALREADY marked as received. (SKU: {sku} | Qty: {qty})"
         else:
             df.loc[mask, 'Received'] = True
+            df.loc[mask, 'Received Timestamp'] = get_current_ist_time() # Add Timestamp
+            
             st.session_state['returns_df'] = df
             st.session_state['scanned_status'] = 'success'
             st.session_state['scanned_message'] = f"✅ Marked Received: {tracking_id} | SKU: {sku} | Qty: {qty}"
@@ -101,7 +157,8 @@ def display_aggrid(df):
         'Quantity',       # L
         'Return Status',  # U
         'Return Type',    # W
-        'Received'        
+        'Received',       
+        'Received Timestamp' # New Column
     ]
     
     display_cols = [c for c in default_cols if c in df.columns]
@@ -183,9 +240,14 @@ def process_bulk_upload(bulk_file):
         matches_mask = df['Tracking ID'].isin(bulk_ids_list)
         
         already_received = df[matches_mask & (df['Received'] == True)].shape[0]
-        newly_received = df[matches_mask & (df['Received'] == False)].shape[0]
+        newly_received_mask = matches_mask & (df['Received'] == False)
+        newly_received = df[newly_received_mask].shape[0]
         
-        df.loc[matches_mask, 'Received'] = True
+        # Mark Received and Add Timestamp to only the newly scanned ones
+        current_time = get_current_ist_time()
+        df.loc[newly_received_mask, 'Received'] = True
+        df.loc[newly_received_mask, 'Received Timestamp'] = current_time
+        
         st.session_state['returns_df'] = df
         
         not_found_count = len(missing_ids)
@@ -204,7 +266,6 @@ with st.sidebar:
     st.title("⚙️ Operations")
     st.markdown("**1. Master Google Sheet**")
     
-    # Default URL
     default_url = "https://docs.google.com/spreadsheets/d/1EUkC4MZAaIW5MIfYNT01nsYyttrL1Rp-a9Z2EsOU6us/edit?usp=sharing"
     gsheet_url = st.text_input("Google Sheet Link:", value=default_url)
     
@@ -223,18 +284,28 @@ with st.sidebar:
     
     if current_df is not None:
         st.divider()
-        st.markdown("### 💾 Save Data")
-        st.info("💡 Note: Direct live updates to Google Sheets require an API key. Please download the updated Excel here and paste it into your sheet after scanning.")
+        st.markdown("### ☁️ Sync & Save Data")
         
-        csv = current_df.to_csv(index=False).encode('utf-8')
-        st.download_button(label="📥 Download Backup (CSV)", data=csv, file_name="returns_backup.csv", mime="text/csv", use_container_width=True)
+        # New Google Sheet Sync Button
+        if st.button("🚀 Live Sheet Mein Update Karein", use_container_width=True, type="primary"):
+            with st.spinner("Saving data to Google Sheets..."):
+                success, msg = sync_to_google_sheet(current_df, gsheet_url)
+                if success:
+                    st.success("✅ Google Sheet successfully updated!")
+                else:
+                    st.error(f"❌ Failed to update Sheet: {msg}")
+                    st.info("💡 Hint: API Setup is required for live updates. You can still download the Excel file below.")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.info("You can also download local backups:")
         
         excel_data = to_excel(current_df)
-        st.download_button(label="📊 Download Updated Excel", data=excel_data, file_name="updated_flipkart_returns.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, type="primary")
+        st.download_button(label="📊 Download Updated Excel", data=excel_data, file_name="updated_flipkart_returns.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
         
         st.divider()
         if st.button("🗑️ Clear All Received Marks", use_container_width=True):
             current_df['Received'] = False
+            current_df['Received Timestamp'] = ""
             st.session_state['returns_df'] = current_df
             st.session_state['scanned_message'] = None
             st.session_state['bulk_message'] = None
@@ -277,7 +348,6 @@ else:
             
             if submitted and manual_tracking_id:
                 process_scan(manual_tracking_id)
-                # Removed st.rerun() to maintain the active tab
 
         msg = st.session_state.get('scanned_message')
         if msg:
@@ -313,7 +383,6 @@ else:
         if st.button("🚀 Process Bulk Upload", type="primary"):
             if bulk_file is not None:
                 process_bulk_upload(bulk_file)
-                # Removed st.rerun() to keep the user on the Bulk Upload tab!
             else:
                 st.warning("Please upload a file first.")
                 
