@@ -13,7 +13,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for UI enhancements
 st.markdown("""
     <style>
     .big-font { font-size: 24px !important; font-weight: bold; }
@@ -22,42 +21,34 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# Session State Initialization (Error Fix)
+# Bulletproof Session State Initialization
 # -----------------------------------------------------------------------------
-if 'returns_df' not in st.session_state:
-    st.session_state['returns_df'] = None
-if 'scanned_message' not in st.session_state:
-    st.session_state['scanned_message'] = None
-if 'scanned_status' not in st.session_state:
-    st.session_state['scanned_status'] = None
+# Ye loop ensure karega ki keys hamesha exist karein, chahe app refresh ho
+for key in ['returns_df', 'scanned_message', 'scanned_status']:
+    if key not in st.session_state:
+        st.session_state[key] = None
 
 # -----------------------------------------------------------------------------
 # Helper Functions
 # -----------------------------------------------------------------------------
 def load_data(file):
     try:
-        # Try specific sheet first, fallback to first sheet
         try:
             df = pd.read_excel(file, sheet_name="1-25 Flipkart Return")
         except ValueError:
             df = pd.read_excel(file, sheet_name=0)
         
-        # Strip whitespace from column names just in case
         df.columns = df.columns.str.strip()
         
-        # Verify Tracking ID exists
         if 'Tracking ID' not in df.columns:
             st.sidebar.error("❌ 'Tracking ID' column not found in the uploaded file.")
             return None
                 
-        # Initialize Received column if not present
         if 'Received' not in df.columns:
             df['Received'] = False
         else:
-            # Standardize existing boolean/text data
             df['Received'] = df['Received'].apply(lambda x: True if str(x).lower() == 'true' else False)
             
-        # Clean Tracking IDs for reliable exact matching
         df['Tracking ID'] = df['Tracking ID'].astype(str).str.strip().str.lower()
         
         return df
@@ -66,7 +57,8 @@ def load_data(file):
         return None
 
 def process_scan(tracking_id):
-    if st.session_state['returns_df'] is None:
+    df = st.session_state.get('returns_df')
+    if df is None:
         st.error("Please upload a file first.")
         return
 
@@ -74,17 +66,12 @@ def process_scan(tracking_id):
     if not clean_id:
         return
 
-    df = st.session_state['returns_df']
-    
-    # Check if exact match exists
     mask = df['Tracking ID'] == clean_id
     if mask.any():
-        # Get item details for the success message (Fallback to 'N/A' if columns are missing somehow)
         row = df[mask].iloc[0]
         sku = row.get('SKU', 'N/A')
         qty = row.get('Quantity', 'N/A')
         
-        # Check if already marked
         if df.loc[mask, 'Received'].iloc[0] == True:
             st.session_state['scanned_status'] = 'warning'
             st.session_state['scanned_message'] = f"⚠️ Tracking ID '{tracking_id}' is ALREADY marked as received. (SKU: {sku} | Qty: {qty})"
@@ -98,28 +85,24 @@ def process_scan(tracking_id):
         st.session_state['scanned_message'] = f"❌ Tracking ID '{tracking_id}' not found in uploaded sheet!"
 
 def display_aggrid(df):
-    # Exact columns you requested: C, E, H, L, U, W + Received
+    # Only the columns you specifically requested + Received
     default_cols = [
-        'Order Item ID',  # Column C
-        'Tracking ID',    # Column E
-        'SKU',            # Column H
-        'Quantity',       # Column L
-        'Return Status',  # Column U
-        'Return Type',    # Column W
-        'Received'        # Custom Status Column
+        'Order Item ID',  # C
+        'Tracking ID',    # E
+        'SKU',            # H
+        'Quantity',       # L
+        'Return Status',  # U
+        'Return Type',    # W
+        'Received'        
     ]
     
-    # Strictly select ONLY these columns if they exist in the uploaded file
     display_cols = [c for c in default_cols if c in df.columns]
-    
-    # We pass only the filtered dataframe to the grid
     filtered_for_display = df[display_cols]
     
     gb = GridOptionsBuilder.from_dataframe(filtered_for_display)
     gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=50)
     gb.configure_default_column(filterable=True, sortable=True, resizable=True)
     
-    # JS code for row highlighting (Green for Received)
     row_style_jscode = JsCode("""
     function(params) {
         if (params.data.Received === true || params.data.Received === 'true') {
@@ -147,8 +130,7 @@ def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Updated Returns')
-    processed_data = output.getvalue()
-    return processed_data
+    return output.getvalue()
 
 # -----------------------------------------------------------------------------
 # Sidebar
@@ -157,42 +139,34 @@ with st.sidebar:
     st.title("⚙️ Operations")
     uploaded_file = st.file_uploader("Upload Returns Excel (.xlsx)", type=['xlsx', 'xls'])
     
-    if uploaded_file is not None and st.session_state['returns_df'] is None:
+    # Safe check for df
+    current_df = st.session_state.get('returns_df')
+    
+    if uploaded_file is not None and current_df is None:
         with st.spinner("Loading Data..."):
-            df = load_data(uploaded_file)
-            if df is not None:
-                st.session_state['returns_df'] = df
+            loaded_df = load_data(uploaded_file)
+            if loaded_df is not None:
+                st.session_state['returns_df'] = loaded_df
                 st.success("File loaded successfully!")
                 st.rerun()
 
-    if st.session_state['returns_df'] is not None:
+    # Re-fetch df after potential upload
+    current_df = st.session_state.get('returns_df')
+    
+    if current_df is not None:
         st.divider()
         st.markdown("### Data Management")
         
-        # Backup CSV
-        csv = st.session_state['returns_df'].to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="💾 Save Current Data as CSV",
-            data=csv,
-            file_name="returns_backup.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+        csv = current_df.to_csv(index=False).encode('utf-8')
+        st.download_button(label="💾 Save Current Data as CSV", data=csv, file_name="returns_backup.csv", mime="text/csv", use_container_width=True)
         
-        # Download Updated Excel (This will download ALL original columns + Received)
-        excel_data = to_excel(st.session_state['returns_df'])
-        st.download_button(
-            label="📊 Download Updated Excel",
-            data=excel_data,
-            file_name="updated_flipkart_returns.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            type="primary"
-        )
+        excel_data = to_excel(current_df)
+        st.download_button(label="📊 Download Updated Excel", data=excel_data, file_name="updated_flipkart_returns.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, type="primary")
         
         st.divider()
         if st.button("🗑️ Clear All Received Marks", use_container_width=True):
-            st.session_state['returns_df']['Received'] = False
+            current_df['Received'] = False
+            st.session_state['returns_df'] = current_df
             st.session_state['scanned_message'] = None
             st.rerun()
 
@@ -201,14 +175,14 @@ with st.sidebar:
 # -----------------------------------------------------------------------------
 st.title("📦 Flipkart Returns Scanner - Panipat / Malur / Bhiwandi")
 
-if st.session_state['returns_df'] is None:
+main_df = st.session_state.get('returns_df')
+
+if main_df is None:
     st.info("👈 Please upload your Flipkart Returns Excel file in the sidebar to begin.")
 else:
-    df = st.session_state['returns_df']
-    
     # Metrics
-    total_count = len(df)
-    received_count = df['Received'].sum()
+    total_count = len(main_df)
+    received_count = main_df['Received'].sum()
     pending_count = total_count - received_count
     
     col1, col2, col3 = st.columns(3)
@@ -218,16 +192,12 @@ else:
     
     st.divider()
 
-    # Tabs
     tab_scan, tab_all = st.tabs(["🎯 Scan & Mark Received", "📋 All Returns Data"])
     
-    # -------------------------------------------------------------------------
-    # TAB 1: Scan & Mark Received
-    # -------------------------------------------------------------------------
+    # --- TAB 1: Scan & Mark Received ---
     with tab_scan:
         st.markdown('<p class="big-font">Scan Tracking ID</p>', unsafe_allow_html=True)
         
-        # Scanner Form
         with st.form("scan_form", clear_on_submit=True):
             col_input, col_btn = st.columns([4, 1])
             with col_input:
@@ -239,27 +209,25 @@ else:
                 process_scan(manual_tracking_id)
                 st.rerun()
 
-        # Display Scan Status Message (SAFE .get() method applied here!)
-        if st.session_state.get('scanned_message'):
-            status = st.session_state.get('scanned_status')
-            
+        # SAFE DISPLAY LOGIC - No Error Possible Here
+        msg = st.session_state.get('scanned_message')
+        if msg:
+            status = st.session_state.get('scanned_status', 'info')
             if status == 'success':
-                st.success(st.session_state['scanned_message'])
+                st.success(msg)
             elif status == 'warning':
-                st.warning(st.session_state['scanned_message'])
+                st.warning(msg)
             else:
-                st.error(st.session_state['scanned_message'])
+                st.error(msg)
 
         st.markdown("### Recent Data Overview")
-        # Quick filters
         f_col1, f_col2 = st.columns(2)
         with f_col1:
             pending_only = st.checkbox("Show Pending Only", value=False, key="scan_pending")
         with f_col2:
             search_query = st.text_input("🔍 Quick Search (Tracking ID / SKU)", key="scan_search")
 
-        # Apply Filters
-        filtered_df = df.copy()
+        filtered_df = main_df.copy()
         if pending_only:
             filtered_df = filtered_df[filtered_df['Received'] == False]
         if search_query:
@@ -270,12 +238,9 @@ else:
             )
             filtered_df = filtered_df[mask]
 
-        # Display the filtered table with ONLY the requested columns
         display_aggrid(filtered_df)
 
-    # -------------------------------------------------------------------------
-    # TAB 2: All Returns
-    # -------------------------------------------------------------------------
+    # --- TAB 2: All Returns ---
     with tab_all:
         st.markdown("### Master Returns Dataset")
         
@@ -285,8 +250,7 @@ else:
         with f2_col2:
             all_search_query = st.text_input("🔍 Quick Search (Tracking ID / SKU)", key="all_search")
 
-        # Apply Filters
-        filtered_all_df = df.copy()
+        filtered_all_df = main_df.copy()
         if all_pending_only:
             filtered_all_df = filtered_all_df[filtered_all_df['Received'] == False]
         if all_search_query:
@@ -297,5 +261,4 @@ else:
             )
             filtered_all_df = filtered_all_df[mask2]
             
-        # Display the filtered table with ONLY the requested columns
         display_aggrid(filtered_all_df)
