@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import re
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
 
 # -----------------------------------------------------------------------------
@@ -30,17 +31,26 @@ for key in ['returns_df', 'scanned_message', 'scanned_status', 'bulk_message', '
 # -----------------------------------------------------------------------------
 # Helper Functions
 # -----------------------------------------------------------------------------
-def load_data(file):
+def load_data_from_gsheet(url):
     try:
-        try:
-            df = pd.read_excel(file, sheet_name="1-25 Flipkart Return")
-        except ValueError:
-            df = pd.read_excel(file, sheet_name=0)
+        # Google Sheet URL ko CSV download URL mein convert karna
+        match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
+        if match:
+            sheet_id = match.group(1)
+            gid = "0"
+            if "gid=" in url:
+                gid = url.split("gid=")[1].split("&")[0]
+            
+            csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+            df = pd.read_csv(csv_url)
+        else:
+            st.sidebar.error("❌ Invalid Google Sheet URL. Please check the link.")
+            return None
         
         df.columns = df.columns.str.strip()
         
         if 'Tracking ID' not in df.columns:
-            st.sidebar.error("❌ 'Tracking ID' column not found in the uploaded master file.")
+            st.sidebar.error("❌ 'Tracking ID' column not found in the Google Sheet.")
             return None
                 
         if 'Received' not in df.columns:
@@ -52,13 +62,13 @@ def load_data(file):
         
         return df
     except Exception as e:
-        st.sidebar.error(f"Error loading file: {e}")
+        st.sidebar.error(f"Error loading file: {e}. Make sure link is 'Anyone with the link'.")
         return None
 
 def process_scan(tracking_id):
     df = st.session_state.get('returns_df')
     if df is None:
-        st.error("Please upload the master file first.")
+        st.error("Please load the Google Sheet first.")
         return
 
     clean_id = str(tracking_id).strip().lower()
@@ -81,7 +91,7 @@ def process_scan(tracking_id):
             st.session_state['scanned_message'] = f"✅ Marked Received: {tracking_id} | SKU: {sku} | Qty: {qty}"
     else:
         st.session_state['scanned_status'] = 'error'
-        st.session_state['scanned_message'] = f"❌ Tracking ID '{tracking_id}' not found in the uploaded sheet!"
+        st.session_state['scanned_message'] = f"❌ Tracking ID '{tracking_id}' not found in the loaded sheet!"
 
 def display_aggrid(df):
     default_cols = [
@@ -140,12 +150,11 @@ def get_missing_ids_csv(missing_ids_list):
 
 def process_bulk_upload(bulk_file):
     df = st.session_state.get('returns_df')
-    # Reset missing ids state
     st.session_state['missing_bulk_ids'] = None
     
     if df is None:
         st.session_state['bulk_status'] = 'error'
-        st.session_state['bulk_message'] = "Please upload the Master Excel file in the sidebar first!"
+        st.session_state['bulk_message'] = "Please load the Google Sheet in the sidebar first!"
         return
 
     try:
@@ -159,7 +168,6 @@ def process_bulk_upload(bulk_file):
             st.session_state['bulk_message'] = "❌ 'Tracking ID' column not found in the template."
             return
             
-        # Get unique IDs from bulk upload and master sheet
         bulk_ids = set(bulk_df['Tracking ID'].dropna().astype(str).str.strip().str.lower().tolist())
         main_ids = set(df['Tracking ID'].astype(str).tolist())
         
@@ -168,9 +176,8 @@ def process_bulk_upload(bulk_file):
             st.session_state['bulk_message'] = "⚠️ The uploaded file is empty. No Tracking IDs found."
             return
             
-        # Find matches and missing
         missing_ids = list(bulk_ids - main_ids)
-        st.session_state['missing_bulk_ids'] = missing_ids  # Save to session state
+        st.session_state['missing_bulk_ids'] = missing_ids
         
         bulk_ids_list = list(bulk_ids)
         matches_mask = df['Tracking ID'].isin(bulk_ids_list)
@@ -178,51 +185,55 @@ def process_bulk_upload(bulk_file):
         already_received = df[matches_mask & (df['Received'] == True)].shape[0]
         newly_received = df[matches_mask & (df['Received'] == False)].shape[0]
         
-        # Mark as received
         df.loc[matches_mask, 'Received'] = True
         st.session_state['returns_df'] = df
         
         not_found_count = len(missing_ids)
         
         st.session_state['bulk_status'] = 'success'
-        st.session_state['bulk_message'] = f"✅ Bulk Update Complete! \n\n🎯 Newly marked: **{newly_received}** \n⚠️ Already marked: **{already_received}** \n❌ Not found in sheet: **{not_found_count}**"
+        st.session_state['bulk_message'] = f"✅ Bulk Update Pura Hua! \n\n🎯 Naye mark hue: **{newly_received}** \n⚠️ Pehle se mark the: **{already_received}** \n❌ Sheet mein nahi mile: **{not_found_count}**"
         
     except Exception as e:
         st.session_state['bulk_status'] = 'error'
-        st.session_state['bulk_message'] = f"Error processing file: {e}"
+        st.session_state['bulk_message'] = f"File process karne mein error: {e}"
 
 # -----------------------------------------------------------------------------
 # Sidebar
 # -----------------------------------------------------------------------------
 with st.sidebar:
-    st.title("⚙️ Operations")
-    st.markdown("**1. Upload Master Returns Data**")
-    uploaded_file = st.file_uploader("Upload Returns Excel (.xlsx)", type=['xlsx', 'xls'], key="master_upload")
+    st.title("⚙️ Operations (Kaam-Kaaj)")
+    st.markdown("**1. Master Google Sheet**")
     
-    current_df = st.session_state.get('returns_df')
+    # Default URL set kar diya hai aapki sheet ka
+    default_url = "https://docs.google.com/spreadsheets/d/1EUkC4MZAaIW5MIfYNT01nsYyttrL1Rp-a9Z2EsOU6us/edit?usp=sharing"
+    gsheet_url = st.text_input("Google Sheet Link:", value=default_url)
     
-    if uploaded_file is not None and current_df is None:
-        with st.spinner("Loading Data..."):
-            loaded_df = load_data(uploaded_file)
-            if loaded_df is not None:
-                st.session_state['returns_df'] = loaded_df
-                st.success("Master File loaded successfully!")
-                st.rerun()
+    if st.button("🔄 Data Load Karein", type="primary"):
+        if gsheet_url:
+            with st.spinner("Google Sheets se data aa raha hai..."):
+                loaded_df = load_data_from_gsheet(gsheet_url)
+                if loaded_df is not None:
+                    st.session_state['returns_df'] = loaded_df
+                    st.success("✅ Data load ho gaya!")
+                    st.rerun()
+        else:
+            st.warning("Kripya link daalein.")
 
     current_df = st.session_state.get('returns_df')
     
     if current_df is not None:
         st.divider()
-        st.markdown("### Data Management")
+        st.markdown("### 💾 Data Save Karein")
+        st.info("💡 Note: Live Google Sheet mein direct update ke liye API chahiye. Scan ke baad yahan se Excel download karke sheet mein paste kar lein.")
         
         csv = current_df.to_csv(index=False).encode('utf-8')
-        st.download_button(label="💾 Save Current Data as CSV", data=csv, file_name="returns_backup.csv", mime="text/csv", use_container_width=True)
+        st.download_button(label="📥 Backup Download (CSV)", data=csv, file_name="returns_backup.csv", mime="text/csv", use_container_width=True)
         
         excel_data = to_excel(current_df)
-        st.download_button(label="📊 Download Updated Excel", data=excel_data, file_name="updated_flipkart_returns.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, type="primary")
+        st.download_button(label="📊 Updated Excel Download", data=excel_data, file_name="updated_flipkart_returns.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, type="primary")
         
         st.divider()
-        if st.button("🗑️ Clear All Received Marks", use_container_width=True):
+        if st.button("🗑️ Sabhi Received Marks Clear Karein", use_container_width=True):
             current_df['Received'] = False
             st.session_state['returns_df'] = current_df
             st.session_state['scanned_message'] = None
@@ -238,7 +249,7 @@ st.title("📦 Flipkart Returns Scanner")
 main_df = st.session_state.get('returns_df')
 
 if main_df is None:
-    st.info("👈 Please upload your MAIN Flipkart Returns Excel file in the sidebar to begin.")
+    st.info("👈 Kripya sidebar mein 'Data Load Karein' par click karke shuru karein.")
 else:
     total_count = len(main_df)
     received_count = main_df['Received'].sum()
@@ -246,8 +257,8 @@ else:
     
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Returns", total_count)
-    col2.metric("✅ Received", received_count)
-    col3.metric("⏳ Pending", pending_count)
+    col2.metric("✅ Received (Mil Gaye)", received_count)
+    col3.metric("⏳ Pending (Baaki Hain)", pending_count)
     
     st.divider()
 
@@ -255,14 +266,14 @@ else:
     
     # --- TAB 1: Single Scan ---
     with tab_scan:
-        st.markdown('<p class="big-font">Scan Tracking ID</p>', unsafe_allow_html=True)
+        st.markdown('<p class="big-font">Tracking ID Scan Karein</p>', unsafe_allow_html=True)
         
         with st.form("scan_form", clear_on_submit=True):
             col_input, col_btn = st.columns([4, 1])
             with col_input:
-                manual_tracking_id = st.text_input("Tracking ID", label_visibility="collapsed", placeholder="Scan or type Tracking ID here...")
+                manual_tracking_id = st.text_input("Tracking ID", label_visibility="collapsed", placeholder="Yahan Tracking ID scan ya type karein...")
             with col_btn:
-                submitted = st.form_submit_button("Mark as Received", use_container_width=True)
+                submitted = st.form_submit_button("Received Mark Karein", use_container_width=True)
             
             if submitted and manual_tracking_id:
                 process_scan(manual_tracking_id)
@@ -278,25 +289,25 @@ else:
             else:
                 st.error(msg)
 
-        st.markdown("### Recent Data Overview")
+        st.markdown("### 📊 Data Overview")
         display_aggrid(main_df)
 
     # --- TAB 2: BULK UPLOAD ---
     with tab_bulk:
-        st.markdown("### 📥 Bulk Mark Returns as Received")
-        st.write("Use this feature if you have multiple Tracking IDs to mark at once.")
+        st.markdown("### 📥 Bulk Mark Returns")
+        st.write("Agar aapke paas bahut saari Tracking IDs hain, toh ek sath upload karein.")
         
-        st.markdown("**Step 1:** Download the tracking ID template below.")
+        st.markdown("**Step 1:** Template download karein.")
         st.download_button(
-            label="⬇️ Download Tracking ID Template (CSV)",
+            label="⬇️ Download Tracking ID Template",
             data=get_bulk_template_csv(),
             file_name="bulk_tracking_template.csv",
             mime="text/csv"
         )
         
-        st.markdown("**Step 2:** Paste all your Tracking IDs into the template file and save it.")
+        st.markdown("**Step 2:** File mein IDs paste karein.")
         
-        st.markdown("**Step 3:** Upload the filled template here.")
+        st.markdown("**Step 3:** Bhari hui file yahan upload karein.")
         bulk_file = st.file_uploader("Upload Filled Template (.csv / .xlsx)", type=['csv', 'xlsx'])
         
         if st.button("🚀 Process Bulk Upload", type="primary"):
@@ -304,7 +315,7 @@ else:
                 process_bulk_upload(bulk_file)
                 st.rerun()
             else:
-                st.warning("Please upload a file first.")
+                st.warning("Kripya pehle file upload karein.")
                 
         # --- BULK UPLOAD MESSAGES & MISSING IDs DOWNLOAD ---
         bulk_msg = st.session_state.get('bulk_message')
@@ -313,10 +324,9 @@ else:
             if b_status == 'success':
                 st.success(bulk_msg)
                 
-                # Check if there are missing IDs to download
                 missing_ids = st.session_state.get('missing_bulk_ids')
                 if missing_ids and len(missing_ids) > 0:
-                    st.warning(f"⚠️ {len(missing_ids)} Tracking IDs were not found in the master sheet. You can download the missing list below:")
+                    st.warning(f"⚠️ {len(missing_ids)} Tracking IDs sheet mein nahi mili. Niche se download karein:")
                     st.download_button(
                         label="⬇️ Download Missing IDs (CSV)",
                         data=get_missing_ids_csv(missing_ids),
