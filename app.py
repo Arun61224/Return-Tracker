@@ -23,7 +23,7 @@ st.markdown("""
 # -----------------------------------------------------------------------------
 # Bulletproof Session State Initialization
 # -----------------------------------------------------------------------------
-for key in ['returns_df', 'scanned_message', 'scanned_status', 'bulk_message', 'bulk_status']:
+for key in ['returns_df', 'scanned_message', 'scanned_status', 'bulk_message', 'bulk_status', 'missing_bulk_ids']:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -134,8 +134,15 @@ def get_bulk_template_csv():
     df = pd.DataFrame(columns=['Tracking ID'])
     return df.to_csv(index=False).encode('utf-8')
 
+def get_missing_ids_csv(missing_ids_list):
+    df = pd.DataFrame({'Tracking ID Not Found': missing_ids_list})
+    return df.to_csv(index=False).encode('utf-8')
+
 def process_bulk_upload(bulk_file):
     df = st.session_state.get('returns_df')
+    # Reset missing ids state
+    st.session_state['missing_bulk_ids'] = None
+    
     if df is None:
         st.session_state['bulk_status'] = 'error'
         st.session_state['bulk_message'] = "Pehle sidebar mein Master Excel file upload karein!"
@@ -152,28 +159,33 @@ def process_bulk_upload(bulk_file):
             st.session_state['bulk_message'] = "❌ Template mein 'Tracking ID' column nahi mila."
             return
             
-        bulk_ids = bulk_df['Tracking ID'].dropna().astype(str).str.strip().str.lower().tolist()
+        # Get unique IDs from bulk upload and master sheet
+        bulk_ids = set(bulk_df['Tracking ID'].dropna().astype(str).str.strip().str.lower().tolist())
+        main_ids = set(df['Tracking ID'].astype(str).tolist())
         
         if not bulk_ids:
             st.session_state['bulk_status'] = 'error'
             st.session_state['bulk_message'] = "⚠️ File empty hai, koi Tracking ID nahi mili."
             return
             
-        main_ids = df['Tracking ID']
-        matches = main_ids.isin(bulk_ids)
+        # Find matches and missing
+        missing_ids = list(bulk_ids - main_ids)
+        st.session_state['missing_bulk_ids'] = missing_ids  # Save to session state
         
-        already_received = df[matches & (df['Received'] == True)].shape[0]
-        newly_received = df[matches & (df['Received'] == False)].shape[0]
+        bulk_ids_list = list(bulk_ids)
+        matches_mask = df['Tracking ID'].isin(bulk_ids_list)
         
-        df.loc[matches, 'Received'] = True
+        already_received = df[matches_mask & (df['Received'] == True)].shape[0]
+        newly_received = df[matches_mask & (df['Received'] == False)].shape[0]
+        
+        # Mark as received
+        df.loc[matches_mask, 'Received'] = True
         st.session_state['returns_df'] = df
         
-        total_unique_bulk = len(set(bulk_ids))
-        found_in_master = df[matches]['Tracking ID'].nunique()
-        not_found = total_unique_bulk - found_in_master
+        not_found_count = len(missing_ids)
         
         st.session_state['bulk_status'] = 'success'
-        st.session_state['bulk_message'] = f"✅ Bulk Update Complete! \n\n🎯 Naye mark hue: **{newly_received}** \n⚠️ Pehle se mark the: **{already_received}** \n❌ Sheet mein nahi mile: **{not_found}**"
+        st.session_state['bulk_message'] = f"✅ Bulk Update Complete! \n\n🎯 Naye mark hue: **{newly_received}** \n⚠️ Pehle se mark the: **{already_received}** \n❌ Sheet mein nahi mile: **{not_found_count}**"
         
     except Exception as e:
         st.session_state['bulk_status'] = 'error'
@@ -215,6 +227,7 @@ with st.sidebar:
             st.session_state['returns_df'] = current_df
             st.session_state['scanned_message'] = None
             st.session_state['bulk_message'] = None
+            st.session_state['missing_bulk_ids'] = None
             st.rerun()
 
 # -----------------------------------------------------------------------------
@@ -238,7 +251,6 @@ else:
     
     st.divider()
 
-    # Sirf 2 Tabs ab
     tab_scan, tab_bulk = st.tabs(["🎯 Single Scan", "📁 Bulk Upload"])
     
     # --- TAB 1: Single Scan ---
@@ -294,10 +306,23 @@ else:
             else:
                 st.warning("Please upload a file first.")
                 
+        # --- BULK UPLOAD MESSAGES & MISSING IDs DOWNLOAD ---
         bulk_msg = st.session_state.get('bulk_message')
         if bulk_msg:
             b_status = st.session_state.get('bulk_status', 'info')
             if b_status == 'success':
                 st.success(bulk_msg)
+                
+                # Check if there are missing IDs to download
+                missing_ids = st.session_state.get('missing_bulk_ids')
+                if missing_ids and len(missing_ids) > 0:
+                    st.warning(f"⚠️ {len(missing_ids)} Tracking IDs master sheet mein nahi mile. Aap unki list niche se download kar sakte hain:")
+                    st.download_button(
+                        label="⬇️ Download Missing IDs (CSV)",
+                        data=get_missing_ids_csv(missing_ids),
+                        file_name="missing_tracking_ids.csv",
+                        mime="text/csv",
+                        type="secondary"
+                    )
             else:
                 st.error(bulk_msg)
