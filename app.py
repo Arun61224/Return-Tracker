@@ -58,7 +58,7 @@ def load_data(file):
 def process_scan(tracking_id):
     df = st.session_state.get('returns_df')
     if df is None:
-        st.error("Please upload the main file first.")
+        st.error("Please upload the master file first.")
         return
 
     clean_id = str(tracking_id).strip().lower()
@@ -81,7 +81,7 @@ def process_scan(tracking_id):
             st.session_state['scanned_message'] = f"✅ Marked Received: {tracking_id} | SKU: {sku} | Qty: {qty}"
     else:
         st.session_state['scanned_status'] = 'error'
-        st.session_state['scanned_message'] = f"❌ Tracking ID '{tracking_id}' not found in uploaded sheet!"
+        st.session_state['scanned_message'] = f"❌ Tracking ID '{tracking_id}' not found in the uploaded sheet!"
 
 def display_aggrid(df):
     default_cols = [
@@ -145,7 +145,7 @@ def process_bulk_upload(bulk_file):
     
     if df is None:
         st.session_state['bulk_status'] = 'error'
-        st.session_state['bulk_message'] = "Pehle sidebar mein Master Excel file upload karein!"
+        st.session_state['bulk_message'] = "Please upload the Master Excel file in the sidebar first!"
         return
 
     try:
@@ -156,7 +156,7 @@ def process_bulk_upload(bulk_file):
             
         if 'Tracking ID' not in bulk_df.columns:
             st.session_state['bulk_status'] = 'error'
-            st.session_state['bulk_message'] = "❌ Template mein 'Tracking ID' column nahi mila."
+            st.session_state['bulk_message'] = "❌ 'Tracking ID' column not found in the template."
             return
             
         # Get unique IDs from bulk upload and master sheet
@@ -165,7 +165,7 @@ def process_bulk_upload(bulk_file):
         
         if not bulk_ids:
             st.session_state['bulk_status'] = 'error'
-            st.session_state['bulk_message'] = "⚠️ File empty hai, koi Tracking ID nahi mili."
+            st.session_state['bulk_message'] = "⚠️ The uploaded file is empty. No Tracking IDs found."
             return
             
         # Find matches and missing
@@ -185,7 +185,7 @@ def process_bulk_upload(bulk_file):
         not_found_count = len(missing_ids)
         
         st.session_state['bulk_status'] = 'success'
-        st.session_state['bulk_message'] = f"✅ Bulk Update Complete! \n\n🎯 Naye mark hue: **{newly_received}** \n⚠️ Pehle se mark the: **{already_received}** \n❌ Sheet mein nahi mile: **{not_found_count}**"
+        st.session_state['bulk_message'] = f"✅ Bulk Update Complete! \n\n🎯 Newly marked: **{newly_received}** \n⚠️ Already marked: **{already_received}** \n❌ Not found in sheet: **{not_found_count}**"
         
     except Exception as e:
         st.session_state['bulk_status'] = 'error'
@@ -284,9 +284,9 @@ else:
     # --- TAB 2: BULK UPLOAD ---
     with tab_bulk:
         st.markdown("### 📥 Bulk Mark Returns as Received")
-        st.write("Agar aapke paas bahut saare Tracking IDs hain jo ek sath mark karne hain, toh is feature ka use karein.")
+        st.write("Use this feature if you have multiple Tracking IDs to mark at once.")
         
-        st.markdown("**Step 1:** Niche di gayi template download karein.")
+        st.markdown("**Step 1:** Download the tracking ID template below.")
         st.download_button(
             label="⬇️ Download Tracking ID Template (CSV)",
             data=get_bulk_template_csv(),
@@ -294,9 +294,9 @@ else:
             mime="text/csv"
         )
         
-        st.markdown("**Step 2:** Us template file mein apne saare Tracking IDs paste karke save karein.")
+        st.markdown("**Step 2:** Paste all your Tracking IDs into the template file and save it.")
         
-        st.markdown("**Step 3:** Bhari hui template ko yahan upload karein.")
+        st.markdown("**Step 3:** Upload the filled template here.")
         bulk_file = st.file_uploader("Upload Filled Template (.csv / .xlsx)", type=['csv', 'xlsx'])
         
         if st.button("🚀 Process Bulk Upload", type="primary"):
@@ -316,7 +316,7 @@ else:
                 # Check if there are missing IDs to download
                 missing_ids = st.session_state.get('missing_bulk_ids')
                 if missing_ids and len(missing_ids) > 0:
-                    st.warning(f"⚠️ {len(missing_ids)} Tracking IDs master sheet mein nahi mile. Aap unki list niche se download kar sakte hain:")
+                    st.warning(f"⚠️ {len(missing_ids)} Tracking IDs were not found in the master sheet. You can download the missing list below:")
                     st.download_button(
                         label="⬇️ Download Missing IDs (CSV)",
                         data=get_missing_ids_csv(missing_ids),
