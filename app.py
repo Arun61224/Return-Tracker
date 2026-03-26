@@ -22,7 +22,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# Session State Initialization (Error Fix Here)
+# Session State Initialization (Error Fix)
 # -----------------------------------------------------------------------------
 if 'returns_df' not in st.session_state:
     st.session_state['returns_df'] = None
@@ -81,7 +81,6 @@ def process_scan(tracking_id):
     if mask.any():
         # Get item details for the success message (Fallback to 'N/A' if columns are missing somehow)
         row = df[mask].iloc[0]
-        product = row.get('Product', 'N/A')
         sku = row.get('SKU', 'N/A')
         qty = row.get('Quantity', 'N/A')
         
@@ -93,22 +92,30 @@ def process_scan(tracking_id):
             df.loc[mask, 'Received'] = True
             st.session_state['returns_df'] = df
             st.session_state['scanned_status'] = 'success'
-            st.session_state['scanned_message'] = f"✅ Marked Received: {product} | SKU: {sku} | Qty: {qty}"
+            st.session_state['scanned_message'] = f"✅ Marked Received: {tracking_id} | SKU: {sku} | Qty: {qty}"
     else:
         st.session_state['scanned_status'] = 'error'
         st.session_state['scanned_message'] = f"❌ Tracking ID '{tracking_id}' not found in uploaded sheet!"
 
 def display_aggrid(df):
-    # Determine columns to show by default
-    default_cols = ['Tracking ID', 'SKU', 'Quantity', 'Product', 'Return Reason', 
-                    'Return Sub-reason', 'Return Status', 'Location Name', 'Received']
+    # Exact columns you requested: C, E, H, L, U, W + Received
+    default_cols = [
+        'Order Item ID',  # Column C
+        'Tracking ID',    # Column E
+        'SKU',            # Column H
+        'Quantity',       # Column L
+        'Return Status',  # Column U
+        'Return Type',    # Column W
+        'Received'        # Custom Status Column
+    ]
     
-    # Only select columns that actually exist in the dataframe
+    # Strictly select ONLY these columns if they exist in the uploaded file
     display_cols = [c for c in default_cols if c in df.columns]
-    # Add any remaining columns at the end
-    display_cols += [c for c in df.columns if c not in display_cols]
     
-    gb = GridOptionsBuilder.from_dataframe(df[display_cols])
+    # We pass only the filtered dataframe to the grid
+    filtered_for_display = df[display_cols]
+    
+    gb = GridOptionsBuilder.from_dataframe(filtered_for_display)
     gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=50)
     gb.configure_default_column(filterable=True, sortable=True, resizable=True)
     
@@ -127,7 +134,7 @@ def display_aggrid(df):
     grid_options = gb.build()
 
     AgGrid(
-        df,
+        filtered_for_display,
         gridOptions=grid_options,
         enable_enterprise_modules=False,
         allow_unsafe_jscode=True,
@@ -172,7 +179,7 @@ with st.sidebar:
             use_container_width=True
         )
         
-        # Download Updated Excel
+        # Download Updated Excel (This will download ALL original columns + Received)
         excel_data = to_excel(st.session_state['returns_df'])
         st.download_button(
             label="📊 Download Updated Excel",
@@ -249,7 +256,7 @@ else:
         with f_col1:
             pending_only = st.checkbox("Show Pending Only", value=False, key="scan_pending")
         with f_col2:
-            search_query = st.text_input("🔍 Quick Search (Tracking ID / SKU / Product)", key="scan_search")
+            search_query = st.text_input("🔍 Quick Search (Tracking ID / SKU)", key="scan_search")
 
         # Apply Filters
         filtered_df = df.copy()
@@ -259,11 +266,11 @@ else:
             search_query = search_query.lower()
             mask = (
                 filtered_df['Tracking ID'].astype(str).str.lower().str.contains(search_query) |
-                filtered_df.get('SKU', pd.Series(dtype=str)).astype(str).str.lower().str.contains(search_query) |
-                filtered_df.get('Product', pd.Series(dtype=str)).astype(str).str.lower().str.contains(search_query)
+                filtered_df.get('SKU', pd.Series(dtype=str)).astype(str).str.lower().str.contains(search_query)
             )
             filtered_df = filtered_df[mask]
 
+        # Display the filtered table with ONLY the requested columns
         display_aggrid(filtered_df)
 
     # -------------------------------------------------------------------------
@@ -276,7 +283,7 @@ else:
         with f2_col1:
             all_pending_only = st.checkbox("Show Pending Only", value=False, key="all_pending")
         with f2_col2:
-            all_search_query = st.text_input("🔍 Quick Search (Tracking ID / SKU / Product)", key="all_search")
+            all_search_query = st.text_input("🔍 Quick Search (Tracking ID / SKU)", key="all_search")
 
         # Apply Filters
         filtered_all_df = df.copy()
@@ -286,9 +293,9 @@ else:
             all_search_query = all_search_query.lower()
             mask2 = (
                 filtered_all_df['Tracking ID'].astype(str).str.lower().str.contains(all_search_query) |
-                filtered_all_df.get('SKU', pd.Series(dtype=str)).astype(str).str.lower().str.contains(all_search_query) |
-                filtered_all_df.get('Product', pd.Series(dtype=str)).astype(str).str.lower().str.contains(all_search_query)
+                filtered_all_df.get('SKU', pd.Series(dtype=str)).astype(str).str.lower().str.contains(all_search_query)
             )
             filtered_all_df = filtered_all_df[mask2]
             
+        # Display the filtered table with ONLY the requested columns
         display_aggrid(filtered_all_df)
