@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import re
+import json
 from datetime import datetime
 import pytz
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
@@ -103,12 +104,28 @@ def sync_to_google_sheet(df, url):
             
         scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         
-        # FIX FOR PEM FILE ERROR:
-        # We need to manually replace literal '\n' characters in the TOML string with actual newlines
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        if "private_key" in creds_dict:
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        # --- FOOLPROOF CREDENTIALS PARSING ---
+        secret_data = st.secrets["gcp_service_account"]
         
+        # If user pasted raw JSON inside triple quotes (''' ... ''')
+        if isinstance(secret_data, str):
+            try:
+                creds_dict = json.loads(secret_data)
+            except Exception as json_err:
+                return False, f"JSON Format Error in Secrets: {json_err}"
+        else:
+            # If user used TOML format
+            creds_dict = dict(secret_data)
+        
+        # Aggressive Private Key Fix (Solves the "Unable to load PEM file" error)
+        if "private_key" in creds_dict:
+            pk = creds_dict["private_key"]
+            pk = pk.replace("\\n", "\n")
+            # In case spaces replaced newlines accidentally
+            pk = pk.replace("-----BEGIN PRIVATE KEY----- ", "-----BEGIN PRIVATE KEY-----\n")
+            pk = pk.replace(" -----END PRIVATE KEY-----", "\n-----END PRIVATE KEY-----")
+            creds_dict["private_key"] = pk
+            
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
