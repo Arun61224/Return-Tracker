@@ -117,14 +117,15 @@ def sync_to_google_sheet(df, url):
         # FIX: Clean dataframe for Google Sheets (Int64 JSON error fix)
         df_filled = df.fillna("").astype(str)
         
-        data_to_upload = [df_filled.columns.values.tolist()] + df_filled.values.tolist()
+        # Convert into a pure Python list of lists
+        data_to_upload = [df_filled.columns.tolist()] + df_filled.values.tolist()
         
-        # Format aur colors bachane ke liye bina clear kiye data overwrite karte hain
-        worksheet.update(data_to_upload)
+        # FIX FOR GSPREAD 6.0+: Specify range_name="A1" so it knows where to paste data
+        worksheet.update(range_name="A1", values=data_to_upload)
         
         return True, "Success"
     except Exception as e:
-        return False, str(e)
+        return False, f"Error details: {str(e)}"
 
 def process_scan(tracking_id):
     df = st.session_state.get('returns_df')
