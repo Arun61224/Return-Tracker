@@ -159,7 +159,7 @@ def process_scan(tracking_id):
 
 def display_aggrid(df):
     default_cols = [
-        'Order Item ID',  
+        'Order ID',  
         'Tracking ID',    
         'SKU',            
         'Quantity',       
