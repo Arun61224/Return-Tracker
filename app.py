@@ -103,7 +103,13 @@ def sync_to_google_sheet(df, url):
             
         scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         
-        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+        # FIX FOR PEM FILE ERROR:
+        # We need to manually replace literal '\n' characters in the TOML string with actual newlines
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
         match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
