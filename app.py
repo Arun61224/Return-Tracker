@@ -59,16 +59,16 @@ def load_data_from_gsheet(url):
             csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
             df = pd.read_csv(csv_url)
         else:
-            st.sidebar.error("❌ Invalid Google Sheet URL. Kripya link check karein.")
+            st.sidebar.error("❌ Invalid Google Sheet URL. Please check the link.")
             return None
         
         df.columns = df.columns.str.strip()
         
         if 'Tracking ID' not in df.columns:
-            st.sidebar.error("❌ 'Tracking ID' column Google Sheet mein nahi mila.")
+            st.sidebar.error("❌ 'Tracking ID' column not found in the Google Sheet.")
             return None
                 
-        # "Received" Status ko explicitly text mein rakhna ("Received" or "Not Received")
+        # Initialize Received Status explicitly to text ("Received" or "Not Received")
         if 'Received' not in df.columns:
             df['Received'] = "Not Received"
         else:
@@ -76,30 +76,30 @@ def load_data_from_gsheet(url):
                 lambda x: "Received" if str(x).strip().lower() in ['true', 'received', 'yes'] else "Not Received"
             )
             
-        # Timestamp column initialize
+        # Initialize Timestamp column
         if 'Received Timestamp' not in df.columns:
             df['Received Timestamp'] = ""
             
         df['Tracking ID'] = df['Tracking ID'].astype(str).str.strip().str.lower()
         
-        # COLUMN REARRANGEMENT: Ensure 'Received' and 'Received Timestamp' are ALWAYS at the end (After AK column)
+        # COLUMN REARRANGEMENT: Ensure 'Received' and 'Received Timestamp' are ALWAYS at the end
         all_cols = [c for c in df.columns if c not in ['Received', 'Received Timestamp']]
         all_cols.extend(['Received', 'Received Timestamp'])
         df = df[all_cols]
         
         return df
     except Exception as e:
-        st.sidebar.error(f"File load karne mein error: {e}. Dhyan rakhein link 'Anyone with the link' par set ho.")
+        st.sidebar.error(f"Error loading file: {e}. Ensure the link is set to 'Anyone with the link'.")
         return None
 
 def sync_to_google_sheet(df, url):
     """Saves the updated DataFrame back to the live Google Sheet."""
     if not GSPREAD_AVAILABLE:
-        return False, "Kripya 'gspread' aur 'google-auth' ko requirements.txt mein add karein."
+        return False, "Please add 'gspread' and 'google-auth' to requirements.txt."
         
     try:
         if "gcp_service_account" not in st.secrets:
-            return False, "API Key missing! Kripya Streamlit Secrets mein GCP Service Account add karein."
+            return False, "API Key missing! Please add GCP Service Account in Streamlit Secrets."
             
         scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         
@@ -108,7 +108,7 @@ def sync_to_google_sheet(df, url):
         
         match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
         if not match:
-            return False, "Invalid Google Sheet URL"
+            return False, "Invalid Google Sheet URL."
             
         sheet_id = match.group(1)
         spreadsheet = client.open_by_key(sheet_id)
@@ -130,7 +130,7 @@ def sync_to_google_sheet(df, url):
 def process_scan(tracking_id):
     df = st.session_state.get('returns_df')
     if df is None:
-        st.error("Kripya pehle Google Sheet load karein.")
+        st.error("Please load the Google Sheet first.")
         return
 
     clean_id = str(tracking_id).strip().lower()
@@ -145,17 +145,17 @@ def process_scan(tracking_id):
         
         if df.loc[mask, 'Received'].iloc[0] == "Received":
             st.session_state['scanned_status'] = 'warning'
-            st.session_state['scanned_message'] = f"⚠️ Tracking ID '{tracking_id}' PEHLE SE received mark hai. (SKU: {sku} | Qty: {qty})"
+            st.session_state['scanned_message'] = f"⚠️ Tracking ID '{tracking_id}' is ALREADY marked as received. (SKU: {sku} | Qty: {qty})"
         else:
             df.loc[mask, 'Received'] = "Received"
             df.loc[mask, 'Received Timestamp'] = get_current_ist_time()
             
             st.session_state['returns_df'] = df
             st.session_state['scanned_status'] = 'success'
-            st.session_state['scanned_message'] = f"✅ Received Mark Ho Gaya: {tracking_id} | SKU: {sku} | Qty: {qty}"
+            st.session_state['scanned_message'] = f"✅ Marked as Received: {tracking_id} | SKU: {sku} | Qty: {qty}"
     else:
         st.session_state['scanned_status'] = 'error'
-        st.session_state['scanned_message'] = f"❌ Tracking ID '{tracking_id}' sheet mein nahi mila!"
+        st.session_state['scanned_message'] = f"❌ Tracking ID '{tracking_id}' not found in the loaded sheet!"
 
 def display_aggrid(df):
     default_cols = [
@@ -219,7 +219,7 @@ def process_bulk_upload(bulk_file):
     
     if df is None:
         st.session_state['bulk_status'] = 'error'
-        st.session_state['bulk_message'] = "Kripya sidebar se pehle Google Sheet load karein!"
+        st.session_state['bulk_message'] = "Please load the Master Google Sheet in the sidebar first!"
         return
 
     try:
@@ -230,7 +230,7 @@ def process_bulk_upload(bulk_file):
             
         if 'Tracking ID' not in bulk_df.columns:
             st.session_state['bulk_status'] = 'error'
-            st.session_state['bulk_message'] = "❌ Template mein 'Tracking ID' column nahi mila."
+            st.session_state['bulk_message'] = "❌ 'Tracking ID' column not found in the uploaded template."
             return
             
         bulk_ids = set(bulk_df['Tracking ID'].dropna().astype(str).str.strip().str.lower().tolist())
@@ -238,7 +238,7 @@ def process_bulk_upload(bulk_file):
         
         if not bulk_ids:
             st.session_state['bulk_status'] = 'error'
-            st.session_state['bulk_message'] = "⚠️ Upload ki gayi file khaali hai."
+            st.session_state['bulk_message'] = "⚠️ The uploaded file is empty."
             return
             
         missing_ids = list(bulk_ids - main_ids)
@@ -261,11 +261,11 @@ def process_bulk_upload(bulk_file):
         not_found_count = len(missing_ids)
         
         st.session_state['bulk_status'] = 'success'
-        st.session_state['bulk_message'] = f"✅ Bulk Update Pura Hua! \n\n🎯 Naye mark hue: **{newly_received}** \n⚠️ Pehle se mark the: **{already_received}** \n❌ Sheet mein nahi mile: **{not_found_count}**"
+        st.session_state['bulk_message'] = f"✅ Bulk Update Complete! \n\n🎯 Newly Marked: **{newly_received}** \n⚠️ Already Marked: **{already_received}** \n❌ Not Found: **{not_found_count}**"
         
     except Exception as e:
         st.session_state['bulk_status'] = 'error'
-        st.session_state['bulk_message'] = f"File process karne mein error: {e}"
+        st.session_state['bulk_message'] = f"Error processing file: {e}"
 
 # -----------------------------------------------------------------------------
 # Sidebar
@@ -277,16 +277,16 @@ with st.sidebar:
     default_url = "https://docs.google.com/spreadsheets/d/1EUkC4MZAaIW5MIfYNT01nsYyttrL1Rp-a9Z2EsOU6us/edit?usp=sharing"
     gsheet_url = st.text_input("Google Sheet Link:", value=default_url)
     
-    if st.button("🔄 Data Load Karein", type="primary"):
+    if st.button("🔄 Load Data", type="primary"):
         if gsheet_url:
-            with st.spinner("Google Sheets se data aa raha hai..."):
+            with st.spinner("Fetching data from Google Sheets..."):
                 loaded_df = load_data_from_gsheet(gsheet_url)
                 if loaded_df is not None:
                     st.session_state['returns_df'] = loaded_df
-                    st.success("✅ Data load ho gaya!")
+                    st.success("✅ Data loaded successfully!")
                     st.rerun()
         else:
-            st.warning("Kripya link daalein.")
+            st.warning("Please enter a valid link.")
 
     current_df = st.session_state.get('returns_df')
     
@@ -294,22 +294,23 @@ with st.sidebar:
         st.divider()
         st.markdown("### ☁️ Sync & Save Data")
         
-        if st.button("🚀 Live Sheet Mein Update Karein", use_container_width=True, type="primary"):
-            with st.spinner("Google Sheet update ho rahi hai..."):
+        if st.button("🚀 Push to Google Sheet", use_container_width=True, type="primary"):
+            with st.spinner("Saving data to live Google Sheet..."):
                 success, msg = sync_to_google_sheet(current_df, gsheet_url)
                 if success:
-                    st.success("✅ Google Sheet update ho gayi!")
+                    st.success("✅ Google Sheet successfully updated!")
                 else:
-                    st.error(f"❌ Update fail hua: {msg}")
+                    st.error(f"❌ Failed to update Sheet: {msg}")
+                    st.info("💡 Hint: Did you share the Google Sheet with the Service Account email as an 'Editor'?")
         
         st.markdown("<br>", unsafe_allow_html=True)
-        st.info("Aap data local computer mein bhi download kar sakte hain:")
+        st.info("You can also download local backups:")
         
         excel_data = to_excel(current_df)
-        st.download_button(label="📊 Updated Excel Download Karein", data=excel_data, file_name="updated_flipkart_returns.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        st.download_button(label="📊 Download Updated Excel", data=excel_data, file_name="updated_flipkart_returns.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
         
         st.divider()
-        if st.button("🗑️ Sabhi Received Marks Clear Karein", use_container_width=True):
+        if st.button("🗑️ Clear All Received Marks", use_container_width=True):
             current_df['Received'] = "Not Received"
             current_df['Received Timestamp'] = ""
             st.session_state['returns_df'] = current_df
@@ -326,7 +327,7 @@ st.title("📦 Flipkart Returns Scanner")
 main_df = st.session_state.get('returns_df')
 
 if main_df is None:
-    st.info("👈 Kripya sidebar mein 'Data Load Karein' par click karke shuru karein.")
+    st.info("👈 Please click 'Load Data' in the sidebar to begin.")
 else:
     total_count = len(main_df)
     received_count = (main_df['Received'] == "Received").sum()
@@ -343,14 +344,14 @@ else:
     
     # --- TAB 1: Single Scan ---
     with tab_scan:
-        st.markdown('<p class="big-font">Tracking ID Scan Karein</p>', unsafe_allow_html=True)
+        st.markdown('<p class="big-font">Scan Tracking ID</p>', unsafe_allow_html=True)
         
         with st.form("scan_form", clear_on_submit=True):
             col_input, col_btn = st.columns([4, 1])
             with col_input:
-                manual_tracking_id = st.text_input("Tracking ID", label_visibility="collapsed", placeholder="Yahan Tracking ID scan ya type karein...")
+                manual_tracking_id = st.text_input("Tracking ID", label_visibility="collapsed", placeholder="Scan or type Tracking ID here...")
             with col_btn:
-                submitted = st.form_submit_button("Received Mark Karein", use_container_width=True)
+                submitted = st.form_submit_button("Mark as Received", use_container_width=True)
             
             if submitted and manual_tracking_id:
                 process_scan(manual_tracking_id)
@@ -371,26 +372,26 @@ else:
     # --- TAB 2: BULK UPLOAD ---
     with tab_bulk:
         st.markdown("### 📥 Bulk Mark Returns")
-        st.write("Agar aapke paas ek sath bahut saari Tracking IDs hain, toh is feature ka use karein.")
+        st.write("Upload multiple Tracking IDs at once using the template.")
         
-        st.markdown("**Step 1:** Niche se template download karein.")
+        st.markdown("**Step 1:** Download the Tracking ID template below.")
         st.download_button(
-            label="⬇️ Download Tracking ID Template",
+            label="⬇️ Download Template",
             data=get_bulk_template_csv(),
             file_name="bulk_tracking_template.csv",
             mime="text/csv"
         )
         
-        st.markdown("**Step 2:** File mein IDs paste karein.")
+        st.markdown("**Step 2:** Paste your IDs into the downloaded file.")
         
-        st.markdown("**Step 3:** Bhari hui file yahan upload karein.")
+        st.markdown("**Step 3:** Upload the filled file here.")
         bulk_file = st.file_uploader("Upload Filled Template (.csv / .xlsx)", type=['csv', 'xlsx'])
         
         if st.button("🚀 Process Bulk Upload", type="primary"):
             if bulk_file is not None:
                 process_bulk_upload(bulk_file)
             else:
-                st.warning("Kripya pehle file upload karein.")
+                st.warning("Please upload a file first.")
                 
         # --- BULK UPLOAD MESSAGES & MISSING IDs DOWNLOAD ---
         bulk_msg = st.session_state.get('bulk_message')
@@ -401,7 +402,7 @@ else:
                 
                 missing_ids = st.session_state.get('missing_bulk_ids')
                 if missing_ids and len(missing_ids) > 0:
-                    st.warning(f"⚠️ {len(missing_ids)} Tracking IDs sheet mein nahi mili. Unhe niche se download karein:")
+                    st.warning(f"⚠️ {len(missing_ids)} Tracking IDs were not found in the sheet. You can download the missing IDs list below:")
                     st.download_button(
                         label="⬇️ Download Missing IDs (CSV)",
                         data=get_missing_ids_csv(missing_ids),
