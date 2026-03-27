@@ -48,7 +48,7 @@ def get_current_ist_time():
 
 def load_data_from_gsheet(url):
     try:
-        # Google Sheet URL ko CSV download URL mein convert karna
+        # Convert Google Sheet URL to CSV download URL
         match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
         if match:
             sheet_id = match.group(1)
@@ -68,13 +68,13 @@ def load_data_from_gsheet(url):
             st.sidebar.error("❌ 'Tracking ID' column not found in the Google Sheet.")
             return None
                 
-        # Received Status column initialize
+        # Initialize Received Status column
         if 'Received' not in df.columns:
             df['Received'] = False
         else:
             df['Received'] = df['Received'].apply(lambda x: True if str(x).lower() == 'true' else False)
             
-        # Timestamp column initialize
+        # Initialize Timestamp column
         if 'Received Timestamp' not in df.columns:
             df['Received Timestamp'] = ""
             
@@ -88,21 +88,23 @@ def load_data_from_gsheet(url):
 def sync_to_google_sheet(df, url):
     """Saves the updated DataFrame back to the live Google Sheet."""
     if not GSPREAD_AVAILABLE:
-        return False, "Kripya requirements.txt mein 'gspread' aur 'google-auth' add karein."
+        return False, "Please add 'gspread' and 'google-auth' to requirements.txt"
         
     try:
         # Check if secrets are available in Streamlit Cloud
         if "gcp_service_account" not in st.secrets:
-            return False, "API Key missing! Kripya Streamlit Secrets mein GCP Service Account add karein."
+            return False, "API Key missing! Please add GCP Service Account to Streamlit Secrets."
             
         scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        
+        # Authenticate using Streamlit secrets
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
         client = gspread.authorize(creds)
         
         # Open sheet and update
         match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
         if not match:
-            return False, "Invalid URL"
+            return False, "Invalid Google Sheet URL"
             
         sheet_id = match.group(1)
         spreadsheet = client.open_by_key(sheet_id)
@@ -110,10 +112,15 @@ def sync_to_google_sheet(df, url):
         
         # Clean dataframe for Google Sheets (replace NaN with empty string)
         df_filled = df.fillna("")
+        # Convert boolean values to strings to prevent upload issues
+        df_filled['Received'] = df_filled['Received'].astype(str)
         
         # Update entire sheet to merge the new Received & Timestamp data
         worksheet.clear()
         worksheet.update([df_filled.columns.values.tolist()] + df_filled.values.tolist())
+        
+        # Revert 'Received' back to boolean in session state just in case
+        df['Received'] = df['Received'].apply(lambda x: True if str(x).lower() == 'true' else False)
         
         return True, "Success"
     except Exception as e:
@@ -140,7 +147,7 @@ def process_scan(tracking_id):
             st.session_state['scanned_message'] = f"⚠️ Tracking ID '{tracking_id}' is ALREADY marked as received. (SKU: {sku} | Qty: {qty})"
         else:
             df.loc[mask, 'Received'] = True
-            df.loc[mask, 'Received Timestamp'] = get_current_ist_time() # Add Timestamp
+            df.loc[mask, 'Received Timestamp'] = get_current_ist_time() # Add IST Timestamp
             
             st.session_state['returns_df'] = df
             st.session_state['scanned_status'] = 'success'
@@ -266,6 +273,7 @@ with st.sidebar:
     st.title("⚙️ Operations")
     st.markdown("**1. Master Google Sheet**")
     
+    # Default URL from your workspace
     default_url = "https://docs.google.com/spreadsheets/d/1EUkC4MZAaIW5MIfYNT01nsYyttrL1Rp-a9Z2EsOU6us/edit?usp=sharing"
     gsheet_url = st.text_input("Google Sheet Link:", value=default_url)
     
@@ -287,14 +295,14 @@ with st.sidebar:
         st.markdown("### ☁️ Sync & Save Data")
         
         # New Google Sheet Sync Button
-        if st.button("🚀 Live Sheet Mein Update Karein", use_container_width=True, type="primary"):
-            with st.spinner("Saving data to Google Sheets..."):
+        if st.button("🚀 Push to Google Sheet", use_container_width=True, type="primary"):
+            with st.spinner("Saving data to live Google Sheet..."):
                 success, msg = sync_to_google_sheet(current_df, gsheet_url)
                 if success:
                     st.success("✅ Google Sheet successfully updated!")
                 else:
                     st.error(f"❌ Failed to update Sheet: {msg}")
-                    st.info("💡 Hint: API Setup is required for live updates. You can still download the Excel file below.")
+                    st.info("💡 Hint: Did you add the Service Account to Streamlit Secrets and share the sheet with the Service Account email?")
         
         st.markdown("<br>", unsafe_allow_html=True)
         st.info("You can also download local backups:")
