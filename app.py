@@ -35,7 +35,7 @@ st.markdown("""
 # -----------------------------------------------------------------------------
 # Session State Initialization
 # -----------------------------------------------------------------------------
-for key in ['returns_df', 'scanned_message', 'scanned_status', 'bulk_message', 'bulk_status', 'missing_bulk_ids']:
+for key in ['returns_df', 'scanned_message', 'scanned_status', 'bulk_message', 'bulk_status', 'missing_bulk_ids', 'not_found_df']:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -147,6 +147,68 @@ def sync_to_google_sheet(df, url):
         worksheet.update(range_name="A1", values=data_to_upload)
         
         return True, "Success"
+    except Exception as e:
+        return False, f"Error details: {str(e)}"
+
+def sync_not_found_sheet(df, url, worksheet_name="Missing Tracking IDs."):
+    """Appends not found IDs to the 'Missing Tracking IDs.' sheet without deleting old records."""
+    if not GSPREAD_AVAILABLE:
+        return False, "Please add 'gspread' and 'google-auth' to requirements.txt."
+        
+    try:
+        if "gcp_service_account" not in st.secrets:
+            return False, "API Key missing! Please add GCP Service Account in Streamlit Secrets."
+            
+        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        secret_data = st.secrets["gcp_service_account"]
+        
+        if isinstance(secret_data, str):
+            creds_dict = json.loads(secret_data)
+        else:
+            creds_dict = dict(secret_data)
+        
+        if "private_key" in creds_dict:
+            pk = creds_dict["private_key"]
+            pk = pk.replace("\\n", "\n")
+            pk = pk.replace("-----BEGIN PRIVATE KEY----- ", "-----BEGIN PRIVATE KEY-----\n")
+            pk = pk.replace(" -----END PRIVATE KEY-----", "\n-----END PRIVATE KEY-----")
+            creds_dict["private_key"] = pk
+            
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(creds)
+        
+        match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
+        if not match:
+            return False, "Invalid Google Sheet URL."
+            
+        sheet_id = match.group(1)
+        # 'Missing Tracking IDs.' tab ko open kar rahe hain
+        worksheet = client.open_by_key(sheet_id).worksheet(worksheet_name)
+        
+        # Pehle check karte hain ki sheet mein koi purana data hai ya nahi
+        try:
+            existing_data = worksheet.get_all_records()
+            if existing_data:
+                existing_df = pd.DataFrame(existing_data)
+                # Purane aur naye data ko aapas me jod dete hain
+                combined_df = pd.concat([existing_df, df])
+                # Duplicates remove kar dete hain 
+                if 'Tracking ID Not Found' in combined_df.columns:
+                    combined_df['Tracking ID Not Found'] = combined_df['Tracking ID Not Found'].astype(str).str.strip()
+                    combined_df = combined_df.drop_duplicates(subset=['Tracking ID Not Found'], keep='last')
+            else:
+                combined_df = df
+        except Exception:
+            # Agar koi exception aati hai (jaise sheet totally empty hai), toh sirf naya data lete hain
+            combined_df = df
+
+        df_clean = combined_df.fillna("").astype(str)
+        data_to_upload = [df_clean.columns.tolist()] + df_clean.values.tolist()
+        
+        worksheet.clear()
+        worksheet.update(range_name="A1", values=data_to_upload)
+        
+        return True, f"Pushed to {worksheet_name}"
     except Exception as e:
         return False, f"Error details: {str(e)}"
 
@@ -267,6 +329,18 @@ def process_bulk_upload(bulk_file):
         missing_ids = list(bulk_ids - main_ids)
         st.session_state['missing_bulk_ids'] = missing_ids
         
+        # Save missing IDs to session state dataframe so it can be pushed
+        current_time = get_current_ist_time()
+        if missing_ids:
+            not_found_df = pd.DataFrame({
+                'Tracking ID Not Found': missing_ids,
+                'Status': 'Not Found',
+                'Processed Time': current_time
+            })
+            st.session_state['not_found_df'] = not_found_df
+        else:
+            st.session_state['not_found_df'] = pd.DataFrame()
+        
         bulk_ids_list = list(bulk_ids)
         matches_mask = df['Tracking ID'].isin(bulk_ids_list)
         
@@ -275,7 +349,6 @@ def process_bulk_upload(bulk_file):
         newly_received = df[newly_received_mask].shape[0]
         
         # Mark Received and Add Timestamp
-        current_time = get_current_ist_time()
         df.loc[newly_received_mask, 'Received'] = "Received"
         df.loc[newly_received_mask, 'Received Timestamp'] = current_time
         
@@ -319,11 +392,22 @@ with st.sidebar:
         
         if st.button("🚀 Push to Google Sheet", use_container_width=True, type="primary"):
             with st.spinner("Saving data to live Google Sheet..."):
+                # Main sheet update
                 success, msg = sync_to_google_sheet(current_df, gsheet_url)
+                
+                # Missing sheet update
+                not_found_df = st.session_state.get('not_found_df')
+                if not_found_df is not None and not not_found_df.empty:
+                    nf_success, nf_msg = sync_not_found_sheet(not_found_df, gsheet_url, "Missing Tracking IDs.")
+                    if nf_success:
+                        st.success("✅ Missing IDs successfully pushed to 'Missing Tracking IDs.' tab!")
+                    else:
+                        st.error(f"❌ Failed to push Missing IDs: {nf_msg}")
+                
                 if success:
-                    st.success("✅ Google Sheet successfully updated!")
+                    st.success("✅ Main Google Sheet successfully updated!")
                 else:
-                    st.error(f"❌ Failed to update Sheet: {msg}")
+                    st.error(f"❌ Failed to update Main Sheet: {msg}")
                     st.info("💡 Hint: Did you share the Google Sheet with the Service Account email as an 'Editor'?")
         
         st.markdown("<br>", unsafe_allow_html=True)
@@ -340,6 +424,7 @@ with st.sidebar:
             st.session_state['scanned_message'] = None
             st.session_state['bulk_message'] = None
             st.session_state['missing_bulk_ids'] = None
+            st.session_state['not_found_df'] = None
             st.rerun()
 
 # -----------------------------------------------------------------------------
@@ -363,7 +448,7 @@ else:
     
     st.divider()
 
-    tab_scan, tab_bulk = st.tabs(["🎯 Single Scan", "📁 Bulk Upload"])
+    tab_scan, tab_bulk, tab_not_found = st.tabs(["🎯 Single Scan", "📁 Bulk Upload", "❌ Not Found"])
     
     # --- TAB 1: Single Scan ---
     with tab_scan:
@@ -436,3 +521,12 @@ else:
             else:
                 st.error(bulk_msg)
 
+    # --- TAB 3: NOT FOUND IDs ---
+    with tab_not_found:
+        st.markdown("### ❌ Not Found IDs Overview")
+        not_found_df = st.session_state.get('not_found_df')
+        if not_found_df is not None and not not_found_df.empty:
+            st.dataframe(not_found_df, use_container_width=True)
+            st.info("💡 'Push to Google Sheet' pe click karne se ye records automatically 'Missing Tracking IDs.' sheet mein upload ho jayenge.")
+        else:
+            st.info("No missing IDs yet. Bulk upload scan perform karein.")
